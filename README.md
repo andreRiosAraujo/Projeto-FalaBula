@@ -1,5 +1,14 @@
 # 💊 Chatbot Farmacêutico para Diabetes (RAG)
 
+## Acessar o FalaBula online
+
+**[Abrir o chatbot FalaBula](https://projeto-falabula-dashshp2g9tj3fr9jop2yv.streamlit.app/)**
+
+A interface pode ser acessada pelo navegador no computador, tablet ou celular, sem instalação local. O chatbot é um projeto acadêmico de caráter informativo e não substitui orientação médica.
+
+**Código-fonte:** [Repositório no GitHub](https://github.com/andreRiosAraujo/Projeto-FalaBula)
+
+
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Streamlit](https://img.shields.io/badge/Interface-Streamlit-FF4B4B)
 ![LangChain](https://img.shields.io/badge/Framework-LangChain-1C3C3C)
