@@ -29,3 +29,53 @@ h1{font-family:Manrope,sans-serif;font-size:clamp(30px,4.1vw,51px);font-weight:8
 @media(max-width:768px){[data-testid="stMainBlockContainer"]{padding-left:17px!important;padding-right:17px!important;padding-top:.45rem!important}.top-brand{padding-bottom:14px}.top-pill{font-size:8px;padding:7px}.brand-subtitle{max-width:190px;font-size:10px}.hero{padding:30px 0 18px}.login-intro{margin:32px 0 20px}h1{letter-spacing:-1.2px}.stHorizontalBlock{flex-wrap:wrap!important;gap:8px!important}.stHorizontalBlock>.stColumn{min-width:100%!important;width:100%!important;flex:1 1 100%!important}[data-testid="stForm"]{padding:17px!important}[data-testid="stChatMessage"]{padding:11px 12px}}
 @media(min-width:769px) and (max-width:1100px){[data-testid="stMainBlockContainer"]{padding-left:30px!important;padding-right:30px!important}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+
+/* Correção de contraste para tema escuro do sistema e navegadores móveis.
+   Mantém os cartões claros, independentemente do tema adotado pelo Streamlit. */
+:root { color-scheme: light; }
+.stApp, [data-testid="stAppViewContainer"] { color: #17342d !important; }
+[data-testid="stChatMessage"],
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] *,
+[data-testid="stChatMessage"] p,
+[data-testid="stChatMessage"] li,
+[data-testid="stChatMessage"] strong,
+[data-testid="stChatMessage"] em,
+[data-testid="stChatMessage"] h1,
+[data-testid="stChatMessage"] h2,
+[data-testid="stChatMessage"] h3,
+[data-testid="stChatMessage"] td,
+[data-testid="stChatMessage"] th {
+  color: #17342d !important;
+}
+[data-testid="stChatMessage"] a { color: #075a91 !important; text-decoration: underline; }
+[data-testid="stChatMessage"] table { background: #ffffff !important; color: #17342d !important; }
+[data-testid="stChatMessage"] th { background: #eaf5ee !important; }
+[data-testid="stChatMessage"] td { background: #ffffff !important; }
+[data-testid="stChatMessage"] pre,
+[data-testid="stChatMessage"] code { color: #17342d !important; background: #edf5f0 !important; }
+[data-testid="stChatMessage"] pre *,
+[data-testid="stChatMessage"] code * { color: #17342d !important; }
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] textarea:focus,
+.stTextInput input,
+.stTextInput input:focus {
+  color: #17342d !important;
+  -webkit-text-fill-color: #17342d !important;
+  background-color: #ffffff !important;
+  caret-color: #17342d !important;
+}
+[data-testid="stChatInput"] textarea::placeholder,
+.stTextInput input::placeholder { color: #52675e !important; opacity: 1 !important; }
+[data-testid="stChatInput"] button { color: #17342d !important; }
+[data-testid="stForm"] label,
+[data-testid="stForm"] p,
+[data-testid="stForm"] span { color: #17342d !important; }
+[data-testid="stSidebar"] { color: #17342d !important; }
+[data-testid="stSidebar"] p, [data-testid="stSidebar"] span { color: #17342d !important; }
+@media (prefers-color-scheme: dark) {
+  .stApp, [data-testid="stAppViewContainer"] { color-scheme: light; }
+  [data-testid="stChatMessage"] { background-color: #ffffff !important; }
+  [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) { background-color: #eaf5ee !important; }
+}
