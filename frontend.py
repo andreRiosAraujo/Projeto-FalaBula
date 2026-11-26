@@ -130,7 +130,66 @@ def iniciar_assistente(assinatura):
     return Recuperador(), ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
 
+# Nomes de apresentação para o catálogo inicial. Novos PDFs são exibidos
+# automaticamente pelo nome do arquivo, mesmo sem cadastro nesta tabela.
+NOMES_MEDICAMENTOS = {
+    "bula_Mounjaro.pdf": "Mounjaro (tirzepatida)",
+    "bula_LANTUS_insulina_glargina.pdf": "Lantus (insulina glargina)",
+    "bula_InsulinaHumanaRegular.pdf": "Wosulin R (insulina humana regular)",
+    "bula_InsulinaHumana_NovolinN.pdf": "Novolin N (insulina humana NPH)",
+    "bula_empagliflozina.pdf": "Empagliflozina",
+    "bula_dapagliflozina.pdf": "Dapagliflozina",
+    "bula_Januvia.pdf": "Januvia (sitagliptina)",
+    "bula_glimepirida.pdf": "Glimepirida",
+    "bula_gliclazida.pdf": "Gliclazida",
+    "bula_glibenclamida.pdf": "Glibenclamida",
+    "bula_glifagexr.pdf": "Glifage XR (metformina de liberação prolongada)",
+    "bula_glifage.pdf": "Glifage (metformina)",
+}
+
+
+def pergunta_sobre_catalogo(pergunta):
+    """Detecta solicitações de inventário, que não devem usar busca por trechos."""
+    import re
+    import unicodedata
+
+    texto = unicodedata.normalize("NFKD", pergunta).encode(
+        "ascii", "ignore"
+    ).decode().lower()
+    texto = re.sub(r"[^a-z0-9 ]", " ", texto)
+    termos = ("medicamento", "remedio", "bula", "farmaco")
+    tem_termo = any(t in texto for t in termos)
+    consulta_lista = any(t in texto for t in (
+        "quais", "liste", "listar", "lista", "relacao", "catalogo",
+        "quantos", "todos", "disponiveis", "disponivel", "cadastrados",
+        "cadastrado", "registrados", "tem na base", "tem no sistema",
+        "possui", "estao na base",
+    ))
+    return (tem_termo and consulta_lista) or (
+        "o que tem na base" in texto or "o que voce conhece" in texto
+    )
+
+
+def resposta_catalogo(assinatura):
+    nomes = []
+    for arquivo, _hash in assinatura:
+        nome = NOMES_MEDICAMENTOS.get(
+            arquivo, Path(arquivo).stem.removeprefix("bula_").replace("_", " ")
+        )
+        nomes.append(nome)
+    linhas = [f"{i}. {nome}" for i, nome in enumerate(nomes, 1)]
+    return (
+        f"Encontrei **{len(nomes)} bulas em PDF** cadastradas no FalaBula:\\n\\n"
+        + "\\n".join(linhas)
+        + "\\n\\nA relação indica documentos cadastrados, não disponibilidade "
+        "em farmácias, no SUS ou no Farmácia Popular. "
+        "Alguns documentos podem corresponder ao mesmo princípio ativo."
+    )
+
+
 def responder(pergunta, assinatura):
+    if pergunta_sobre_catalogo(pergunta):
+        return resposta_catalogo(assinatura), []
     if not os.getenv("GROQ_API_KEY"):
         raise RuntimeError(
             "Configure GROQ_API_KEY no arquivo .env (local) ou Secrets (nuvem)."
