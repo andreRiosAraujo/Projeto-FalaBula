@@ -21,7 +21,7 @@ Projeto acadêmico de chatbot que responde a perguntas em português sobre **med
 4. Para a versão online do Streamlit, enviar o PDF ao diretório `documentos/` na branch `main` do GitHub. O Streamlit deve implantar a atualização; depois da implantação, a próxima consulta reconstrói a base. **Editar apenas o Google Drive não atualiza automaticamente o GitHub nem a aplicação.**
 5. Testar consultas sobre indicações, contraindicações, efeitos adversos e ausência de informação. Evitar documentos duplicados, versões conflitantes ou não verificadas.
 
-A atualização é uma **reindexação textual (TF-IDF) de documentos**, não o treinamento ou ajuste dos pesos do modelo de linguagem. A primeira consulta após mudanças pode ser mais lenta e usar recursos de memória; muitos PDFs grandes podem exceder os limites de hospedagem gratuita.
+A atualização é uma **nova leitura e organização das páginas dos PDFs**, não o treinamento ou ajuste dos pesos do modelo de linguagem. A primeira consulta após mudanças pode ser mais lenta e usar recursos de memória; muitos PDFs grandes podem exceder os limites de hospedagem gratuita.
 
 ## Como executar no computador
 
@@ -55,12 +55,12 @@ A aplicação abre normalmente em http://localhost:8501. Para execução online,
 1. **Frontend** — `frontend.py` e `style.css`, com tela de acesso demonstrativa (sem autenticação) e chat responsivo.
 2. **Documentos** — PDFs em `documentos/`, listados automaticamente.
 3. **Leitura** — `PyPDFLoader` e divisão do texto em trechos com sobreposição.
-4. **Indexação leve** — busca textual por TF-IDF com scikit-learn, para reduzir o consumo de memória no Streamlit Cloud. Não utiliza embeddings semânticos nesta versão; esse é um compromisso temporário de desempenho.
-5. **Consulta** — recuperação dos cinco trechos de maior relevância lexical e geração de respostas pela API Groq (`openai/gpt-oss-120b`).
+4. **Leitura e indexação leve** — `falabula_core.py` extrai o texto dos PDFs com `pypdf`, sem carregar modelos de embeddings ou banco vetorial pesado na memória.
+5. **Consulta** — catálogo determinístico para listagens; para perguntas específicas, primeiro identifica a bula pelo nome comercial ou princípio ativo, depois recupera as páginas pertinentes exclusivamente desse PDF e usa a API Groq (`openai/gpt-oss-120b`).
 6. **Rastreabilidade** — cada resposta apresenta, em uma seção expansível, os nomes dos PDFs e as páginas dos trechos recuperados. Essa lista é uma trilha de recuperação, não uma garantia automática de correção de cada afirmação.
-7. **Atualização da base** — assinatura SHA-256 dos PDFs usada para invalidar o índice em cache quando os documentos mudam.
+7. **Atualização da base** — assinatura baseada em nome, tamanho e data de modificação dos PDFs para invalidar o índice em cache quando os documentos mudam.
 
-O arquivo `app.py` original **não foi modificado** e ainda representa o fluxo legado sobre diabetes; para a nova experiência, execute **`frontend.py`**.
+O arquivo `app.py` é agora um **ponto de entrada compatível com Streamlit Cloud** e carrega a mesma interface de `frontend.py`. A versão original de `app.py` permanece na branch de backup. **Ambos os comandos de execução iniciam a mesma aplicação.**
 
 ## Perguntas de validação inicial
 
@@ -78,10 +78,10 @@ O arquivo `app.py` original **não foi modificado** e ainda representa o fluxo l
 ```text
 Projeto-FalaBula/
 ├── documentos/       # PDFs indexados automaticamente pelo frontend
-├── frontend.py       # aplicação atual, genérica
+├── falabula_core.py  # catálogo, identificação e recuperação de documentos\n├── frontend.py       # interface atual, genérica
 ├── style.css         # estilos responsivos
 ├── requirements.txt  # dependências
-├── app.py            # aplicação antiga (preservada)
+├── app.py            # entrada Streamlit Cloud que executa frontend.py
 ├── GuiaDiabetes.pdf  # legado
 ├── Base_Unica_Diabetes_Posologia_Mapeada.pdf  # legado
 └── README.md
@@ -89,8 +89,21 @@ Projeto-FalaBula/
 
 ## Histórico e preservação
 
-Antes da atualização, foi criada a branch de segurança [`backup/antes-base-dinamica-2026-11-26`](https://github.com/andreRiosAraujo/Projeto-FalaBula/tree/backup/antes-base-dinamica-2026-11-26). Os arquivos originais permanecem recuperáveis nessa referência.
+Foram criadas as branches de segurança [`backup/antes-base-dinamica-2026-11-26`](https://github.com/andreRiosAraujo/Projeto-FalaBula/tree/backup/antes-base-dinamica-2026-11-26) e [`backup/antes-correcao-integral-2026-11-26`](https://github.com/andreRiosAraujo/Projeto-FalaBula/tree/backup/antes-correcao-integral-2026-11-26). Elas preservam estados anteriores para recuperação.
 
 ## Responsabilidade
 
 Este é um protótipo acadêmico. As respostas são limitadas às bulas presentes na pasta `documentos/`. Informações sobre disponibilidade no SUS, Farmácia Popular, preços, estoque e elegibilidade devem ser verificadas em fontes governamentais atuais, não deduzidas de bulas.
+
+
+## Diagnóstico e testes de regressão
+
+A aplicação informa a versão do núcleo no menu lateral. O comportamento esperado:
+
+- **"Quais medicamentos estão cadastrados?"**: lista exatamente todos os PDFs da pasta, sem gerar a relação por IA.
+- **"Para que serve o Mounjaro?"**: seleciona exclusivamente o PDF do Mounjaro; não utiliza excertos de insulina ou metformina.
+- **"Quais são os efeitos adversos da dapagliflozina?"**: consulta somente o PDF da dapagliflozina.
+- **"Quais medicamentos há para pressão alta?"**: caso não haja bula e medicamento específico, solicita identificação ou informa limitação; não inventa lista.
+- **"Explique a posologia"** sem medicamento identificado: solicita o nome do produto, sem prescrever.
+
+Executar testes automatizados de funções puras com `python -m unittest discover -s tests -v`. A API Groq e a disponibilidade da implantação no Streamlit Cloud devem ser validadas separadamente, pois dependem do ambiente externo.
