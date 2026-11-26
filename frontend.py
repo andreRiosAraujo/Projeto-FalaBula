@@ -42,8 +42,43 @@ def iniciar_assistente():
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.split_documents(documentos)
     embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-    banco = Chroma.from_documents(documents=chunks, embedding=embeddings)
+   
+    # Cria o banco vetorial em lotes menores.
+    # Isso ajuda a reduzir o consumo de memória.
+
+    tamanho_lote = 25
+
+    if not chunks:
+        raise RuntimeError("Nenhum texto foi extraído dos PDFs.")
+
+    total = len(chunks)
+    print(f"INICIO DA INDEXACAO: {total} trechos", flush=True)
+
+    # Cria o banco com os primeiros 25 trechos.
+    banco = Chroma.from_documents(
+        documents=chunks[:tamanho_lote],
+        embedding=embeddings
+    )
+
+    print(
+        f"INDEXADOS: {min(tamanho_lote, total)}/{total}",
+        flush=True
+    )
+
+    # Adiciona os demais trechos em pequenos lotes.
+    for inicio in range(tamanho_lote, total, tamanho_lote):
+        lote = chunks[inicio:inicio + tamanho_lote]
+        banco.add_documents(lote)
+
+        print(
+            f"INDEXADOS: {inicio + len(lote)}/{total}",
+            flush=True
+        )
+
+    print("INDEXACAO CONCLUIDA", flush=True)
+
     retriever = banco.as_retriever(search_kwargs={'k': 5})
+
     llm = ChatGroq(model='openai/gpt-oss-120b', temperature=0)
     return retriever, llm
 
