@@ -1,132 +1,289 @@
-"""FalaBula: interface de apresentação independente do app.py original.
+"""FalaBula — interface de consulta a bulas PDF, sem alteração do app.py original.
+
 Execute na raiz do repositório: python -m streamlit run frontend.py
+Novos PDFs em documentos/ são reconhecidos após atualização/recarga da aplicação.
 """
 from pathlib import Path
+import hashlib
 import os
+
 import streamlit as st
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / '.env')
-st.set_page_config(page_title='FalaBula | Assistente sobre diabetes', page_icon='💬', layout='wide', initial_sidebar_state='collapsed')
+DOCS_DIR = BASE_DIR / "documentos"
+load_dotenv(BASE_DIR / ".env")
+st.set_page_config(
+    page_title="FalaBula | Assistente de bulas",
+    page_icon="💬",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-CSS_FILE = BASE_DIR / 'style.css'
+CSS_FILE = BASE_DIR / "style.css"
 if CSS_FILE.exists():
-    st.markdown(f'<style>{CSS_FILE.read_text(encoding="utf-8")}</style>', unsafe_allow_html=True)
+    st.markdown(
+        f'<style>{CSS_FILE.read_text(encoding="utf-8")}</style>',
+        unsafe_allow_html=True,
+    )
 
-# Sem autenticação real: campos meramente demonstrativos.
-if 'acesso_liberado' not in st.session_state:
+if "acesso_liberado" not in st.session_state:
     st.session_state.acesso_liberado = False
-if 'mensagens_falabula' not in st.session_state:
+if "mensagens_falabula" not in st.session_state:
     st.session_state.mensagens_falabula = []
-if 'nome_visitante' not in st.session_state:
-    st.session_state.nome_visitante = 'Visitante'
+if "nome_visitante" not in st.session_state:
+    st.session_state.nome_visitante = "Visitante"
 
-@st.cache_resource(show_spinner=False)
-def iniciar_assistente():
-    # Instancia um pipeline equivalente ao do app.py, sem importar nem alterar
-    # esse arquivo (o app.py executa a interface quando importado).
+
+def listar_bulas():
+    """Lista PDFs disponíveis; diretórios externos ao projeto não são pesquisados."""
+    if not DOCS_DIR.is_dir():
+        return []
+    return sorted(
+        (arq for arq in DOCS_DIR.glob("*.pdf") if arq.is_file()),
+        key=lambda a: a.name.casefold(),
+    )
+
+
+def assinatura_documentos(arquivos):
+    """Identifica inclusões, remoções ou modificações sem depender do nome do PDF."""
+    assinatura = []
+    for arquivo in arquivos:
+        h = hashlib.sha256()
+        with arquivo.open("rb") as entrada:
+            for bloco in iter(lambda: entrada.read(1024 * 1024), b""):
+                h.update(bloco)
+        assinatura.append((arquivo.name, h.hexdigest()))
+    return tuple(assinatura)
+
+
+@st.cache_resource(show_spinner=False, max_entries=1)
+def iniciar_assistente(assinatura):
+    """Recria a base vetorial quando a assinatura dos PDFs mudar."""
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_chroma import Chroma
     from langchain_groq import ChatGroq
     from langchain_huggingface import HuggingFaceEmbeddings
 
-    arquivos = ['Base_Unica_Diabetes_Posologia_Mapeada.pdf', 'GuiaDiabetes.pdf']
+    if not assinatura:
+        raise RuntimeError("Nenhum PDF encontrado na pasta documentos.")
+
     documentos = []
-    for nome in arquivos:
-        caminho = BASE_DIR / nome
-        if not caminho.is_file():
-            raise FileNotFoundError(f'Arquivo necessário não encontrado: {nome}')
-        documentos.extend(PyPDFLoader(str(caminho)).load())
+    falhas = []
+    for nome, _hash in assinatura:
+        arquivo = DOCS_DIR / nome
+        try:
+            paginas = PyPDFLoader(str(arquivo)).load()
+            paginas_validas = [p for p in paginas if p.page_content.strip()]
+            for pagina in paginas_validas:
+                pagina.metadata["source"] = nome
+            if not paginas_validas:
+                falhas.append(f"{nome}: PDF sem texto pesquisável")
+            else:
+                documentos.extend(paginas_validas)
+        except Exception as exc:
+            falhas.append(f"{nome}: {type(exc).__name__}")
+
+    if falhas:
+        raise RuntimeError(
+            "Falha na leitura de documentos. Corrija ou substitua os PDFs: "
+            + "; ".join(falhas)
+        )
+    if not documentos:
+        raise RuntimeError("Os PDFs não contêm texto selecionável para indexar.")
+
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.split_documents(documentos)
-    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
     banco = Chroma.from_documents(documents=chunks, embedding=embeddings)
-    retriever = banco.as_retriever(search_kwargs={'k': 5})
-    llm = ChatGroq(model='openai/gpt-oss-120b', temperature=0)
+    retriever = banco.as_retriever(search_kwargs={"k": 5})
+    llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
     return retriever, llm
 
 
-def responder(pergunta):
-    if not os.getenv('GROQ_API_KEY'):
-        raise RuntimeError('A chave GROQ_API_KEY não foi configurada no arquivo .env.')
-    retriever, llm = iniciar_assistente()
+def responder(pergunta, assinatura):
+    if not os.getenv("GROQ_API_KEY"):
+        raise RuntimeError(
+            "Configure GROQ_API_KEY no arquivo .env (local) ou Secrets (nuvem)."
+        )
+    retriever, llm = iniciar_assistente(assinatura)
     documentos = retriever.invoke(pergunta)
-    contexto = '\n\n'.join(doc.page_content for doc in documentos)
-    prompt = f'''Você é um assistente informativo sobre diabetes e medicamentos.
-Responda somente com base no contexto fornecido. Se não houver informação
-suficiente, diga que a informação não foi localizada na base consultada.
-Não invente doses, contraindicações, interações ou condutas terapêuticas.
-Não substitua a orientação de profissionais de saúde.
+    if not documentos:
+        return "Não encontrei essa informação nas bulas cadastradas.", []
 
-Contexto:\n{contexto}\n\nPergunta:\n{pergunta}'''
-    resposta = llm.invoke(prompt).content
-    return str(resposta)
+    trechos = []
+    fontes = []
+    for doc in documentos:
+        nome = Path(doc.metadata.get("source", "documento desconhecido")).name
+        numero = int(doc.metadata.get("page", 0)) + 1
+        fonte = f"{nome} — página {numero}"
+        fontes.append(fonte)
+        trechos.append(f"[Fonte: {fonte}]\n{doc.page_content}")
 
-st.markdown('''<div class="top-brand"><div class="brand-mark">F</div><div><div class="brand-name">FalaBula<span>.</span></div><div class="brand-subtitle">Informação sobre diabetes, de forma acessível</div></div><span class="top-pill">PROJETO ACADÊMICO</span></div>''', unsafe_allow_html=True)
+    contexto = "\n\n".join(trechos)
+    prompt = f"""Você é o FalaBula, assistente acadêmico de consulta a bulas.
+Responda em português claro, SOMENTE com informações efetivamente sustentadas
+pelos trechos de bulas apresentados. Não presuma que um medicamento trate
+determinada doença apenas pelo nome ou classe. Se os trechos não forem
+suficientes, diga explicitamente que a informação não foi localizada
+nos documentos consultados. Não invente dose, indicação, contraindicação,
+interação ou disponibilidade no SUS/Farmácia Popular.
+Diferencie informações gerais da bula de orientações individuais.
+Não recomende iniciar, interromper, trocar medicamentos ou ajustar doses.
+Não faça diagnóstico. Para emergências, oriente procurar atendimento.
+Não cite fonte ou página que não apareça no contexto.
+
+Bulas consultadas:
+{contexto}
+
+Pergunta: {pergunta}
+"""
+    resposta = str(llm.invoke(prompt).content)
+    return resposta, sorted(set(fontes))
+
+
+st.markdown(
+    '<div class="top-brand"><div class="brand-mark">F</div><div>'
+    '<div class="brand-name">FalaBula<span>.</span></div>'
+    '<div class="brand-subtitle">Informações sobre medicamentos, baseadas em bulas</div>'
+    '</div><span class="top-pill">PROJETO ACADÊMICO</span></div>',
+    unsafe_allow_html=True,
+)
 
 if not st.session_state.acesso_liberado:
     left, center, right = st.columns([1, 1.18, 1])
     with center:
-        st.markdown('''<div class="login-intro"><div class="eyebrow">BEM-VINDO AO FALABULA</div><h1>Informação clara.<br><em>Saúde com consciência.</em></h1><p>Converse com nosso assistente e consulte informações sobre diabetes e medicamentos a partir dos documentos do projeto.</p></div>''', unsafe_allow_html=True)
-        with st.form('acesso_demo', border=False):
-            usuario = st.text_input('Seu nome', placeholder='Como podemos chamar você?')
-            st.text_input('Senha demonstrativa', type='password', placeholder='Qualquer senha (opcional)')
-            entrar = st.form_submit_button('Acessar o assistente →', use_container_width=True, type='primary')
+        st.markdown(
+            '<div class="login-intro"><div class="eyebrow">BEM-VINDO AO FALABULA</div>'
+            '<h1>Informação clara.<br><em>Consulta responsável.</em></h1>'
+            '<p>Pesquise informações sobre medicamentos nos documentos '
+            'de bula cadastrados pela equipe.</p></div>',
+            unsafe_allow_html=True,
+        )
+        with st.form("acesso_demo", border=False):
+            usuario = st.text_input(
+                "Seu nome", placeholder="Como podemos chamar você?"
+            )
+            st.text_input(
+                "Senha demonstrativa", type="password",
+                placeholder="Qualquer senha (opcional)"
+            )
+            entrar = st.form_submit_button(
+                "Acessar o assistente →", use_container_width=True, type="primary"
+            )
             if entrar:
-                st.session_state.nome_visitante = usuario.strip() or 'Visitante'
+                st.session_state.nome_visitante = usuario.strip() or "Visitante"
                 st.session_state.acesso_liberado = True
                 st.rerun()
-        st.caption('Acesso de demonstração: não é necessário cadastrar usuário ou informar senha válida. Nenhum dado de login é verificado.')
+        st.caption(
+            "Acesso demonstrativo: não há autenticação de usuários."
+        )
 else:
-    st.markdown('''<div class="hero"><div class="eyebrow">SEU ASSISTENTE VIRTUAL</div><h1>Como podemos <em>ajudar você?</em></h1><p>Tire dúvidas sobre diabetes, medicamentos, indicações e precauções com informações da base documental do projeto.</p></div>''', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hero"><div class="eyebrow">SEU ASSISTENTE DE BULAS</div>'
+        '<h1>Como podemos <em>ajudar você?</em></h1>'
+        '<p>Consulte indicações, precauções, contraindicações e reações adversas '
+        'de medicamentos presentes nas bulas cadastradas.</p></div>',
+        unsafe_allow_html=True,
+    )
+    arquivos = listar_bulas()
+    assinatura = assinatura_documentos(arquivos)
     with st.sidebar:
-        st.markdown('### FalaBula')
-        st.write(f'Olá, **{st.session_state.nome_visitante}**.')
-        if st.button('Nova conversa', use_container_width=True):
+        st.markdown("### FalaBula")
+        st.write(f"Olá, **{st.session_state.nome_visitante}**.")
+        if st.button("Nova conversa", use_container_width=True):
             st.session_state.mensagens_falabula = []
             st.rerun()
-        if st.button('Sair da demonstração', use_container_width=True):
+        if st.button("Sair da demonstração", use_container_width=True):
             st.session_state.acesso_liberado = False
             st.session_state.mensagens_falabula = []
             st.rerun()
         st.divider()
-        st.caption('Projeto acadêmico. As respostas não substituem consulta médica, farmacêutica ou prescrição.')
+        st.caption(f"Bulas cadastradas: {len(arquivos)}")
+        with st.expander("Documentos disponíveis"):
+            for arquivo in arquivos:
+                st.caption(arquivo.name)
+        st.caption(
+            "Projeto acadêmico. Informações não substituem orientação "
+            "médica ou farmacêutica."
+        )
+
+    if not arquivos:
+        st.warning(
+            "Nenhum PDF encontrado na pasta documentos. "
+            "Inclua arquivos PDF de bula e atualize a aplicação."
+        )
+
     if not st.session_state.mensagens_falabula:
-        st.markdown('<div class="suggest-title">Você pode começar por uma destas perguntas:</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="suggest-title">Você pode começar por uma destas perguntas:</div>',
+            unsafe_allow_html=True,
+        )
         temas = [
-            'O que é diabetes tipo 2?',
-            'Para que serve a metformina?',
-            'Quais cuidados são importantes com medicamentos para diabetes?',
-            'Quais são os sinais de hipoglicemia?',
+            "Para que serve o Mounjaro, segundo a bula?",
+            "Quais contraindicações constam na bula do Glifage?",
+            "Que cuidados a bula do Lantus informa?",
+            "Quais reações adversas constam na bula do Januvia?",
         ]
         grade = st.columns(2)
         selecionada = None
         for i, tema in enumerate(temas):
             with grade[i % 2]:
-                if st.button(tema + '  ↗', key=f'sug_{i}', use_container_width=True):
+                if st.button(tema + "  ↗", key=f"sug_{i}", use_container_width=True):
                     selecionada = tema
     else:
         selecionada = None
+
     for mensagem in st.session_state.mensagens_falabula:
-        with st.chat_message(mensagem['role'], avatar='👤' if mensagem['role'] == 'user' else '💬'):
-            st.markdown(mensagem['content'])
-    pergunta_digitada = st.chat_input('Escreva sua pergunta sobre diabetes ou medicamentos...')
+        with st.chat_message(
+            mensagem["role"],
+            avatar="👤" if mensagem["role"] == "user" else "💬",
+        ):
+            st.markdown(mensagem["content"])
+            if mensagem.get("fontes"):
+                with st.expander("Trechos de origem recuperados"):
+                    for fonte in mensagem["fontes"]:
+                        st.caption(fonte)
+
+    pergunta_digitada = st.chat_input(
+        "Pergunte sobre os medicamentos disponíveis nas bulas..."
+    )
     pergunta = pergunta_digitada or selecionada
     if pergunta:
-        st.session_state.mensagens_falabula.append({'role': 'user', 'content': pergunta})
-        with st.chat_message('user', avatar='👤'):
+        st.session_state.mensagens_falabula.append(
+            {"role": "user", "content": pergunta}
+        )
+        with st.chat_message("user", avatar="👤"):
             st.markdown(pergunta)
-        with st.chat_message('assistant', avatar='💬'):
+        with st.chat_message("assistant", avatar="💬"):
             try:
-                with st.spinner('Consultando os documentos do projeto...'):
-                    resposta = responder(pergunta)
+                with st.spinner("Consultando bulas cadastradas..."):
+                    resposta, fontes = responder(pergunta, assinatura)
             except Exception as erro:
-                st.error(f'Não foi possível consultar o assistente: {erro}')
+                st.error(f"Não foi possível consultar as bulas: {erro}")
             else:
                 st.markdown(resposta)
-                st.session_state.mensagens_falabula.append({'role': 'assistant', 'content': resposta})
-    st.markdown('''<div class="medical-note"><strong>Atenção:</strong> conteúdo informativo e acadêmico. Não inicie, suspenda ou altere medicamentos sem orientação médica. Em situações de urgência, procure atendimento de saúde.</div>''', unsafe_allow_html=True)
+                if fontes:
+                    with st.expander("Trechos de origem recuperados"):
+                        for fonte in fontes:
+                            st.caption(fonte)
+                st.session_state.mensagens_falabula.append(
+                    {"role": "assistant", "content": resposta, "fontes": fontes}
+                )
 
-st.markdown('<div class="footer">FalaBula · Projeto acadêmico de inteligência artificial · Informação responsável</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="medical-note"><strong>Atenção:</strong> '
+        'conteúdo informativo e acadêmico. Não inicie, suspenda ou altere '
+        'medicamentos sem orientação médica. Em urgências, procure '
+        'atendimento de saúde.</div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown(
+    '<div class="footer">FalaBula · Projeto acadêmico de inteligência artificial'
+    ' · Informação responsável</div>',
+    unsafe_allow_html=True,
+)
