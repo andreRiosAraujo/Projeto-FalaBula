@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 CATALOGO = {
-    "bula_Mounjaro.pdf": ("Mounjaro", ("mounjaro", "tirzepatida")),
+    "bula_Mounjaro.pdf": ("Mounjaro", ("mounjaro", "monjaro", "tirzepatida")),
     "bula_LANTUS_insulina_glargina.pdf": ("Lantus", ("lantus", "insulina glargina", "glargina")),
     "bula_InsulinaHumanaRegular.pdf": ("Wosulin R", ("wosulin", "insulina humana regular", "insulina regular")),
     "bula_InsulinaHumana_NovolinN.pdf": ("Novolin N", ("novolin", "insulina nph", "insulina humana nph")),
@@ -85,6 +85,8 @@ def resposta_catalogo(arquivos: list[Path]) -> str:
 def identificar_documentos(pergunta: str, arquivos: list[Path]) -> list[Path]:
     """Exige correspondência explícita e inequívoca com o nome/princípio ativo."""
     frase = " " + normalizar(pergunta) + " "
+    # Normaliza também o erro comum Monjaro -> Mounjaro.
+    frase = frase.replace(" monjaro ", " mounjaro ")
     correspondencias = {}
     for p in arquivos:
         if p.name in CATALOGO:
