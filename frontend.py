@@ -179,9 +179,9 @@ def resposta_catalogo(assinatura):
         nomes.append(nome)
     linhas = [f"{i}. {nome}" for i, nome in enumerate(nomes, 1)]
     return (
-        f"Encontrei **{len(nomes)} bulas em PDF** cadastradas no FalaBula:\\n\\n"
-        + "\\n".join(linhas)
-        + "\\n\\nA relação indica documentos cadastrados, não disponibilidade "
+        f"Encontrei **{len(nomes)} bulas em PDF** cadastradas no FalaBula:\n\n"
+        + "\n".join(linhas)
+        + "\n\nA relação indica documentos cadastrados, não disponibilidade "
         "em farmácias, no SUS ou no Farmácia Popular. "
         "Alguns documentos podem corresponder ao mesmo princípio ativo."
     )
