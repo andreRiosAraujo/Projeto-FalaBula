@@ -21,7 +21,7 @@ Projeto acadêmico de chatbot que responde a perguntas em português sobre **med
 4. Para a versão online do Streamlit, enviar o PDF ao diretório `documentos/` na branch `main` do GitHub. O Streamlit deve implantar a atualização; depois da implantação, a próxima consulta reconstrói a base. **Editar apenas o Google Drive não atualiza automaticamente o GitHub nem a aplicação.**
 5. Testar consultas sobre indicações, contraindicações, efeitos adversos e ausência de informação. Evitar documentos duplicados, versões conflitantes ou não verificadas.
 
-A atualização é uma **reindexação de documentos**, não o treinamento ou ajuste dos pesos do modelo de linguagem. A primeira consulta após mudanças pode ser mais lenta e usar recursos de memória; muitos PDFs grandes podem exceder os limites de hospedagem gratuita.
+A atualização é uma **reindexação textual (TF-IDF) de documentos**, não o treinamento ou ajuste dos pesos do modelo de linguagem. A primeira consulta após mudanças pode ser mais lenta e usar recursos de memória; muitos PDFs grandes podem exceder os limites de hospedagem gratuita.
 
 ## Como executar no computador
 
@@ -55,8 +55,8 @@ A aplicação abre normalmente em http://localhost:8501. Para execução online,
 1. **Frontend** — `frontend.py` e `style.css`, com tela de acesso demonstrativa (sem autenticação) e chat responsivo.
 2. **Documentos** — PDFs em `documentos/`, listados automaticamente.
 3. **Leitura** — `PyPDFLoader` e divisão do texto em trechos com sobreposição.
-4. **Indexação** — embeddings do modelo `sentence-transformers/all-MiniLM-L6-v2` e banco vetorial Chroma.
-5. **Consulta** — recuperação dos cinco trechos de maior similaridade e geração de respostas pela API Groq (`openai/gpt-oss-120b`).
+4. **Indexação leve** — busca textual por TF-IDF com scikit-learn, para reduzir o consumo de memória no Streamlit Cloud. Não utiliza embeddings semânticos nesta versão; esse é um compromisso temporário de desempenho.
+5. **Consulta** — recuperação dos cinco trechos de maior relevância lexical e geração de respostas pela API Groq (`openai/gpt-oss-120b`).
 6. **Rastreabilidade** — cada resposta apresenta, em uma seção expansível, os nomes dos PDFs e as páginas dos trechos recuperados. Essa lista é uma trilha de recuperação, não uma garantia automática de correção de cada afirmação.
 7. **Atualização da base** — assinatura SHA-256 dos PDFs usada para invalidar o índice em cache quando os documentos mudam.
 
