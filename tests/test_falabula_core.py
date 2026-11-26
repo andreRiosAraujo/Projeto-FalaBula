@@ -47,6 +47,18 @@ class TestesFalaBula(unittest.TestCase):
         )
         self.assertEqual([p.name for p in encontrados], ["bula_Mounjaro.pdf"])
 
+    def test_monjaro_erro_de_grafia(self):
+        encontrados = identificar_documentos(
+            "Para que serve o Monjaro (tirzepatida)?", self.arquivos
+        )
+        self.assertEqual([p.name for p in encontrados], ["bula_Mounjaro.pdf"])
+
+    def test_monjaro_sem_principio_ativo(self):
+        encontrados = identificar_documentos(
+            "O Monjaro tem contraindicações?", self.arquivos
+        )
+        self.assertEqual([p.name for p in encontrados], ["bula_Mounjaro.pdf"])
+
     def test_medicamento_especifico_nao_mistura_com_outros(self):
         encontrados = identificar_documentos(
             "Quais reações adversas da dapagliflozina?", self.arquivos
