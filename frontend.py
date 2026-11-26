@@ -35,199 +35,43 @@ if "nome_visitante" not in st.session_state:
     st.session_state.nome_visitante = "Visitante"
 
 
+from falabula_core import (
+    listar_arquivos, assinatura, carregar_paginas, responder_pergunta,
+    pergunta_catalogo, resposta_catalogo
+)
+
+
 def listar_bulas():
-    """Lista PDFs disponíveis; diretórios externos ao projeto não são pesquisados."""
-    if not DOCS_DIR.is_dir():
-        return []
-    return sorted(
-        (arq for arq in DOCS_DIR.glob("*.pdf") if arq.is_file()),
-        key=lambda a: a.name.casefold(),
-    )
+    return listar_arquivos(DOCS_DIR)
 
 
 def assinatura_documentos(arquivos):
-    """Identifica inclusões, remoções ou modificações sem depender do nome do PDF."""
-    assinatura = []
-    for arquivo in arquivos:
-        h = hashlib.sha256()
-        with arquivo.open("rb") as entrada:
-            for bloco in iter(lambda: entrada.read(1024 * 1024), b""):
-                h.update(bloco)
-        assinatura.append((arquivo.name, h.hexdigest()))
-    return tuple(assinatura)
+    return assinatura(arquivos)
 
 
-@st.cache_resource(show_spinner=False, max_entries=1)
-def iniciar_assistente(assinatura):
-    """Indexação leve com TF-IDF: evita carregar modelo de embeddings na memória."""
-    from types import SimpleNamespace
-    import re
-    import unicodedata
-    import numpy as np
-    from pypdf import PdfReader
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from langchain_groq import ChatGroq
-
-    if not assinatura:
-        raise RuntimeError("Nenhuma bula PDF encontrada na pasta documentos.")
-
-    trechos = []
-    fontes = []
-    falhas = []
-    for nome, _hash in assinatura:
-        try:
-            reader = PdfReader(str(DOCS_DIR / nome))
-            texto_valido = False
-            for n, pagina in enumerate(reader.pages):
-                texto = (pagina.extract_text() or "").strip()
-                if not texto:
-                    continue
-                texto_valido = True
-                for inicio in range(0, len(texto), 1500):
-                    trecho = texto[max(0, inicio - 150):inicio + 1500].strip()
-                    if len(trecho) >= 30:
-                        trechos.append(trecho)
-                        fontes.append({"source": nome, "page": n})
-            if not texto_valido:
-                falhas.append(f"{nome} (sem texto selecionável)")
-        except Exception as erro:
-            falhas.append(f"{nome} ({type(erro).__name__})")
-    if falhas:
-        raise RuntimeError("Bulas com problema: " + "; ".join(falhas))
-    if not trechos:
-        raise RuntimeError("Nenhuma bula contém texto pesquisável.")
-
-    # Busca lexical com baixo uso de memória. Não exige transformers nem Chroma.
-    vetorizador = TfidfVectorizer(
-        strip_accents="unicode",
-        lowercase=True,
-        max_features=25000,
-        sublinear_tf=True,
-        dtype=np.float32,
-    )
-    matriz = vetorizador.fit_transform(trechos)
-
-    class Recuperador:
-        def invoke(self, pergunta):
-            consulta = vetorizador.transform([pergunta])
-            notas = (matriz @ consulta.T).toarray().ravel()
-            # Prioriza os documentos cujo nome do medicamento está na pergunta.
-            def normalizar(s):
-                return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
-            palavras = set(re.findall(r"[a-z0-9]{4,}", normalizar(pergunta)))
-            comuns = {"bula", "b ulas", "medicamento", "quais", "para", "serve", "sobre", "contraindicacoes", "cuidados", "reacoes", "adversas", "informa", "segundo"}
-            palavras -= comuns
-            for i, meta in enumerate(fontes):
-                nome = normalizar(meta["source"]).replace("bula_", "")
-                if any(p in nome for p in palavras):
-                    notas[i] += 0.35
-            melhores = np.argsort(notas)[::-1][:5]
-            return [
-                SimpleNamespace(page_content=trechos[int(i)], metadata=fontes[int(i)])
-                for i in melhores if notas[int(i)] > 0.005
-            ]
-
-    return Recuperador(), ChatGroq(model="openai/gpt-oss-120b", temperature=0)
+@st.cache_resource(show_spinner=False, max_entries=2)
+def indexar_documentos(identificacao):
+    """Carrega os PDFs uma vez; mudanças de arquivo invalidam o cache."""
+    return carregar_paginas(listar_bulas())
 
 
-# Nomes de apresentação para o catálogo inicial. Novos PDFs são exibidos
-# automaticamente pelo nome do arquivo, mesmo sem cadastro nesta tabela.
-NOMES_MEDICAMENTOS = {
-    "bula_Mounjaro.pdf": "Mounjaro (tirzepatida)",
-    "bula_LANTUS_insulina_glargina.pdf": "Lantus (insulina glargina)",
-    "bula_InsulinaHumanaRegular.pdf": "Wosulin R (insulina humana regular)",
-    "bula_InsulinaHumana_NovolinN.pdf": "Novolin N (insulina humana NPH)",
-    "bula_empagliflozina.pdf": "Empagliflozina",
-    "bula_dapagliflozina.pdf": "Dapagliflozina",
-    "bula_Januvia.pdf": "Januvia (sitagliptina)",
-    "bula_glimepirida.pdf": "Glimepirida",
-    "bula_gliclazida.pdf": "Gliclazida",
-    "bula_glibenclamida.pdf": "Glibenclamida",
-    "bula_glifagexr.pdf": "Glifage XR (metformina de liberação prolongada)",
-    "bula_glifage.pdf": "Glifage (metformina)",
-}
+def chave_groq():
+    """Compatível com .env local e Streamlit Cloud Secrets."""
+    chave = os.getenv("GROQ_API_KEY", "")
+    if chave:
+        return chave
+    try:
+        return st.secrets.get("GROQ_API_KEY", "")
+    except (FileNotFoundError, KeyError):
+        return ""
 
 
-def pergunta_sobre_catalogo(pergunta):
-    """Detecta solicitações de inventário, que não devem usar busca por trechos."""
-    import re
-    import unicodedata
-
-    texto = unicodedata.normalize("NFKD", pergunta).encode(
-        "ascii", "ignore"
-    ).decode().lower()
-    texto = re.sub(r"[^a-z0-9 ]", " ", texto)
-    termos = ("medicamento", "remedio", "bula", "farmaco")
-    tem_termo = any(t in texto for t in termos)
-    consulta_lista = any(t in texto for t in (
-        "quais", "liste", "listar", "lista", "relacao", "catalogo",
-        "quantos", "todos", "disponiveis", "disponivel", "cadastrados",
-        "cadastrado", "registrados", "tem na base", "tem no sistema",
-        "possui", "estao na base",
-    ))
-    return (tem_termo and consulta_lista) or (
-        "o que tem na base" in texto or "o que voce conhece" in texto
-    )
-
-
-def resposta_catalogo(assinatura):
-    nomes = []
-    for arquivo, _hash in assinatura:
-        nome = NOMES_MEDICAMENTOS.get(
-            arquivo, Path(arquivo).stem.removeprefix("bula_").replace("_", " ")
-        )
-        nomes.append(nome)
-    linhas = [f"{i}. {nome}" for i, nome in enumerate(nomes, 1)]
-    return (
-        f"Encontrei **{len(nomes)} bulas em PDF** cadastradas no FalaBula:\n\n"
-        + "\n".join(linhas)
-        + "\n\nA relação indica documentos cadastrados, não disponibilidade "
-        "em farmácias, no SUS ou no Farmácia Popular. "
-        "Alguns documentos podem corresponder ao mesmo princípio ativo."
-    )
-
-
-def responder(pergunta, assinatura):
-    if pergunta_sobre_catalogo(pergunta):
-        return resposta_catalogo(assinatura), []
-    if not os.getenv("GROQ_API_KEY"):
-        raise RuntimeError(
-            "Configure GROQ_API_KEY no arquivo .env (local) ou Secrets (nuvem)."
-        )
-    retriever, llm = iniciar_assistente(assinatura)
-    documentos = retriever.invoke(pergunta)
-    if not documentos:
-        return "Não encontrei essa informação nas bulas cadastradas.", []
-
-    trechos = []
-    fontes = []
-    for doc in documentos:
-        nome = Path(doc.metadata.get("source", "documento desconhecido")).name
-        numero = int(doc.metadata.get("page", 0)) + 1
-        fonte = f"{nome} — página {numero}"
-        fontes.append(fonte)
-        trechos.append(f"[Fonte: {fonte}]\n{doc.page_content}")
-
-    contexto = "\n\n".join(trechos)
-    prompt = f"""Você é o FalaBula, assistente acadêmico de consulta a bulas.
-Responda em português claro, SOMENTE com informações efetivamente sustentadas
-pelos trechos de bulas apresentados. Não presuma que um medicamento trate
-determinada doença apenas pelo nome ou classe. Se os trechos não forem
-suficientes, diga explicitamente que a informação não foi localizada
-nos documentos consultados. Não invente dose, indicação, contraindicação,
-interação ou disponibilidade no SUS/Farmácia Popular.
-Diferencie informações gerais da bula de orientações individuais.
-Não recomende iniciar, interromper, trocar medicamentos ou ajustar doses.
-Não faça diagnóstico. Para emergências, oriente procurar atendimento.
-Não cite fonte ou página que não apareça no contexto.
-
-Bulas consultadas:
-{contexto}
-
-Pergunta: {pergunta}
-"""
-    resposta = str(llm.invoke(prompt).content)
-    return resposta, sorted(set(fontes))
+def responder(pergunta, identificacao):
+    arquivos = listar_bulas()
+    if pergunta_catalogo(pergunta):
+        return resposta_catalogo(arquivos), []
+    indice = indexar_documentos(identificacao)
+    return responder_pergunta(pergunta, arquivos, indice, chave_groq())
 
 
 st.markdown(
@@ -288,6 +132,7 @@ else:
             st.rerun()
         st.divider()
         st.caption(f"Bulas cadastradas: {len(arquivos)}")
+        st.caption("Versão 2.0 — catálogo e busca por bula")
         with st.expander("Documentos disponíveis"):
             for arquivo in arquivos:
                 st.caption(arquivo.name)
@@ -308,10 +153,11 @@ else:
             unsafe_allow_html=True,
         )
         temas = [
+            "Quais medicamentos estão cadastrados no FalaBula?",
             "Para que serve o Mounjaro, segundo a bula?",
             "Quais contraindicações constam na bula do Glifage?",
-            "Que cuidados a bula do Lantus informa?",
             "Quais reações adversas constam na bula do Januvia?",
+
         ]
         grade = st.columns(2)
         selecionada = None
