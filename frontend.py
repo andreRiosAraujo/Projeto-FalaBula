@@ -59,49 +59,75 @@ def assinatura_documentos(arquivos):
 
 @st.cache_resource(show_spinner=False, max_entries=1)
 def iniciar_assistente(assinatura):
-    """Recria a base vetorial quando a assinatura dos PDFs mudar."""
-    from langchain_community.document_loaders import PyPDFLoader
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from langchain_chroma import Chroma
+    """Indexação leve com TF-IDF: evita carregar modelo de embeddings na memória."""
+    from types import SimpleNamespace
+    import re
+    import unicodedata
+    import numpy as np
+    from pypdf import PdfReader
+    from sklearn.feature_extraction.text import TfidfVectorizer
     from langchain_groq import ChatGroq
-    from langchain_huggingface import HuggingFaceEmbeddings
 
     if not assinatura:
-        raise RuntimeError("Nenhum PDF encontrado na pasta documentos.")
+        raise RuntimeError("Nenhuma bula PDF encontrada na pasta documentos.")
 
-    documentos = []
+    trechos = []
+    fontes = []
     falhas = []
     for nome, _hash in assinatura:
-        arquivo = DOCS_DIR / nome
         try:
-            paginas = PyPDFLoader(str(arquivo)).load()
-            paginas_validas = [p for p in paginas if p.page_content.strip()]
-            for pagina in paginas_validas:
-                pagina.metadata["source"] = nome
-            if not paginas_validas:
-                falhas.append(f"{nome}: PDF sem texto pesquisável")
-            else:
-                documentos.extend(paginas_validas)
-        except Exception as exc:
-            falhas.append(f"{nome}: {type(exc).__name__}")
-
+            reader = PdfReader(str(DOCS_DIR / nome))
+            texto_valido = False
+            for n, pagina in enumerate(reader.pages):
+                texto = (pagina.extract_text() or "").strip()
+                if not texto:
+                    continue
+                texto_valido = True
+                for inicio in range(0, len(texto), 1500):
+                    trecho = texto[max(0, inicio - 150):inicio + 1500].strip()
+                    if len(trecho) >= 30:
+                        trechos.append(trecho)
+                        fontes.append({"source": nome, "page": n})
+            if not texto_valido:
+                falhas.append(f"{nome} (sem texto selecionável)")
+        except Exception as erro:
+            falhas.append(f"{nome} ({type(erro).__name__})")
     if falhas:
-        raise RuntimeError(
-            "Falha na leitura de documentos. Corrija ou substitua os PDFs: "
-            + "; ".join(falhas)
-        )
-    if not documentos:
-        raise RuntimeError("Os PDFs não contêm texto selecionável para indexar.")
+        raise RuntimeError("Bulas com problema: " + "; ".join(falhas))
+    if not trechos:
+        raise RuntimeError("Nenhuma bula contém texto pesquisável.")
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_documents(documentos)
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    # Busca lexical com baixo uso de memória. Não exige transformers nem Chroma.
+    vetorizador = TfidfVectorizer(
+        strip_accents="unicode",
+        lowercase=True,
+        max_features=25000,
+        sublinear_tf=True,
+        dtype=np.float32,
     )
-    banco = Chroma.from_documents(documents=chunks, embedding=embeddings)
-    retriever = banco.as_retriever(search_kwargs={"k": 5})
-    llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
-    return retriever, llm
+    matriz = vetorizador.fit_transform(trechos)
+
+    class Recuperador:
+        def invoke(self, pergunta):
+            consulta = vetorizador.transform([pergunta])
+            notas = (matriz @ consulta.T).toarray().ravel()
+            # Prioriza os documentos cujo nome do medicamento está na pergunta.
+            def normalizar(s):
+                return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+            palavras = set(re.findall(r"[a-z0-9]{4,}", normalizar(pergunta)))
+            comuns = {"bula", "b ulas", "medicamento", "quais", "para", "serve", "sobre", "contraindicacoes", "cuidados", "reacoes", "adversas", "informa", "segundo"}
+            palavras -= comuns
+            for i, meta in enumerate(fontes):
+                nome = normalizar(meta["source"]).replace("bula_", "")
+                if any(p in nome for p in palavras):
+                    notas[i] += 0.35
+            melhores = np.argsort(notas)[::-1][:5]
+            return [
+                SimpleNamespace(page_content=trechos[int(i)], metadata=fontes[int(i)])
+                for i in melhores if notas[int(i)] > 0.005
+            ]
+
+    return Recuperador(), ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
 
 def responder(pergunta, assinatura):
