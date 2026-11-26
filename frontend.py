@@ -132,7 +132,7 @@ else:
             st.rerun()
         st.divider()
         st.caption(f"Bulas cadastradas: {len(arquivos)}")
-        st.caption("Versão 2.0 — catálogo e busca por bula")
+        st.caption("Versão 2.1 — correção Monjaro/Mounjaro — 26/11/2026")
         with st.expander("Documentos disponíveis"):
             for arquivo in arquivos:
                 st.caption(arquivo.name)
@@ -214,7 +214,7 @@ else:
     )
 
 st.markdown(
-    '<div class="footer">FalaBula · Projeto acadêmico de inteligência artificial'
+    '<div class="footer">FalaBula · versão 2.1 · Projeto acadêmico de inteligência artificial'
     ' · Informação responsável</div>',
     unsafe_allow_html=True,
 )
